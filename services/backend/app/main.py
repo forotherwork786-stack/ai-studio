@@ -1,203 +1,155 @@
-import os
+from __future__ import annotations
 
-try:
-    from fastapi import FastAPI
-except ImportError as exc:
-    raise RuntimeError('FastAPI required. Run: pip install -r requirements.txt') from exc
-
-from .coordinator import GenerationCoordinator
-from .comfyui_integration import ComfyUIIntegration
-from .generator import LocalImageGenerator
-from .hardware import build_generation_plan, build_hardware_summary
-from .jobs import GenerationJob
-from .storage import initialize_database, list_generation_history, list_projects, log_generation, save_project
-
-app = FastAPI(
-    title='AI Studio Backend',
-    version='0.1.0',
-    description='Local AI image and video generation with free, open models.',
-)
-
-comfyui = ComfyUIIntegration()
-generator = LocalImageGenerator()
-coordinator = GenerationCoordinator()
+from dataclasses import dataclass, field
+from typing import Any
 
 
-@app.on_event('startup')
-def startup_event():
-    initialize_database()
+@dataclass
+class ModelRecord:
+    id: str
+    name: str
+    kind: str
+    version: str
+    file_size_mb: float | None = None
+    source: str = 'Local import'
+    license: str = 'Varies'
+    status: str = 'available'
+    path: str | None = None
+    installed: bool = False
+    supported_tasks: list[str] = field(default_factory=lambda: ['image'])
+    notes: str = ''
 
-
-@app.get('/health')
-def health():
-    return {
-        'status': 'ok',
-        'service': 'ai-studio-backend',
-        'version': '0.1.0',
-    }
-
-
-@app.get('/hardware/summary')
-def hardware_summary():
-    return build_hardware_summary().to_dict()
-
-
-@app.get('/models')
-def list_models():
-    return [
-        {
-            'id': 'sd15',
-            'name': 'Stable Diffusion 1.5',
-            'type': 'image',
-            'size_gb': 4.0,
-            'status': 'ready_for_install',
-            'license': 'CreativeML Open RAIL-M',
-            'requirements': comfyui.get_model_requirements('sd-v1-5.ckpt'),
-        },
-        {
-            'id': 'sdxl',
-            'name': 'Stable Diffusion XL',
-            'type': 'image',
-            'size_gb': 7.0,
-            'status': 'ready_for_install',
-            'license': 'CreativeML Open RAIL-M',
-            'requirements': comfyui.get_model_requirements('sd-xl.safetensors'),
-        },
-        {
-            'id': 'wan21',
-            'name': 'Wan 2.1 T2V 1.3B',
-            'type': 'video',
-            'size_gb': 2.5,
-            'status': 'planned',
-            'license': 'Open-weight',
-            'notes': 'Video generation support planned for Phase 4.',
-        },
-    ]
-
-
-@app.get('/comfyui/status')
-def comfyui_status():
-    return comfyui.get_status()
-
-
-@app.get('/generation/can-proceed')
-def generation_can_proceed(model_name: str = 'sd-v1-5.ckpt', width: int = 512, height: int = 512):
-    return coordinator.can_generate_image(model_name, width, height)
-
-
-@app.get('/generation/defaults')
-def generation_defaults(profile: str = 'Balanced Mode'):
-    return coordinator.get_optimized_settings(profile)
-
-
-@app.post('/projects')
-def create_project(payload: dict):
-    from fastapi import HTTPException
-    name = str(payload.get('name', '')).strip()
-    path = str(payload.get('path', '')).strip()
-    description = payload.get('description')
-    try:
-        project_id = save_project(name, path, description)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {'id': project_id, 'name': name, 'path': path, 'description': description}
-
-
-@app.get('/projects')
-def read_projects():
-    return list_projects()
-
-
-@app.get('/jobs')
-def read_jobs():
-    return list_generation_history()
-
-
-@app.post('/generate/validate')
-def validate_generation_request(payload: dict):
-    """Validate a generation request before execution."""
-    request = generator.build_generation_request(
-        task_id=payload.get('task_id', 'test'),
-        model_name=payload.get('model_name', 'Stable Diffusion 1.5'),
-        prompt=payload.get('prompt', ''),
-        negative_prompt=payload.get('negative_prompt'),
-        width=payload.get('width', 512),
-        height=payload.get('height', 512),
-        steps=payload.get('steps', 20),
-        guidance_scale=payload.get('guidance_scale', 7.5),
-        seed=payload.get('seed'),
-        resource_profile=payload.get('resource_profile', 'Balanced Mode'),
-    )
-    return request
-
-
-@app.post('/generate')
-def create_generation_job(payload: dict):
-    """Create and queue a generation job."""
-    from fastapi import HTTPException
-    import asyncio
-
-    model_name = str(payload.get('model_name', 'Stable Diffusion 1.5')).strip()
-    prompt = str(payload.get('prompt', '')).strip()
-    if not prompt:
-        raise HTTPException(status_code=400, detail='Prompt cannot be empty.')
-
-    checks = coordinator.can_generate_image(
-        model_name,
-        payload.get('width', 512),
-        payload.get('height', 512),
-    )
-
-    job = GenerationJob.from_request(payload)
-    job.status = 'Preparing'
-    job.progress = 0.05
-
-    if not checks['can_proceed']:
-        job.status = 'Failed'
-        job.error = ' '.join(checks['errors']) or 'Generation not available on this system.'
-        log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status)
+    def to_dict(self) -> dict[str, Any]:
         return {
-            'job': job.to_dict(),
-            'checks': checks,
-            'status': 'failed',
+            'id': self.id,
+            'name': self.name,
+            'kind': self.kind,
+            'version': self.version,
+            'file_size_mb': self.file_size_mb,
+            'source': self.source,
+            'license': self.license,
+            'status': self.status,
+            'path': self.path,
+            'installed': self.installed,
+            'supported_tasks': self.supported_tasks,
+            'notes': self.notes,
         }
 
-    request = generator.build_generation_request(
-        task_id=job.task_id,
-        model_name=model_name,
-        prompt=prompt,
-        negative_prompt=payload.get('negative_prompt'),
-        width=payload.get('width', 512),
-        height=payload.get('height', 512),
-        steps=payload.get('steps', 20),
-        guidance_scale=payload.get('guidance_scale', 7.5),
-        seed=payload.get('seed'),
-        resource_profile=payload.get('resource_profile', 'Balanced Mode'),
-    )
 
-    if not request['valid']:
-        job.status = 'Failed'
-        job.error = request['error']
-        log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status)
-        return {
-            'job': job.to_dict(),
-            'request': request,
-            'status': 'failed',
+class ModelManager:
+    """Registry for local models and installation compatibility checks."""
+
+    def __init__(self, storage_dir: str | None = None):
+        self.storage_dir = storage_dir or '.models'
+        self._known_models = {
+            'sd15': ModelRecord(
+                id='sd15',
+                name='Stable Diffusion 1.5',
+                kind='image',
+                version='1.5',
+                file_size_mb=4300,
+                source='Official local model source',
+                license='CreativeML Open RAIL-M',
+                status='available',
+                installed=False,
+                supported_tasks=['image', 'image-to-image', 'inpaint'],
+                notes='Recommended first model for a lightweight local workflow.',
+            ),
+            'sdxl': ModelRecord(
+                id='sdxl',
+                name='SDXL',
+                kind='image',
+                version='1.0',
+                file_size_mb=7000,
+                source='Official local model source or trusted mirror',
+                license='Open-weight / licensing check required',
+                status='available',
+                installed=False,
+                supported_tasks=['image', 'image-to-image'],
+                notes='Larger, higher-quality model; requires more memory.',
+            ),
+            'wan21': ModelRecord(
+                id='wan21',
+                name='Wan 2.1 T2V 1.3B',
+                kind='video',
+                version='1.3B',
+                file_size_mb=2600,
+                source='Open-weight model source',
+                license='Open-weight license review required',
+                status='available',
+                installed=False,
+                supported_tasks=['text-to-video', 'image-to-video'],
+                notes='Requires more robust hardware and should be checked before use.',
+            ),
         }
 
-    job.status = 'Waiting'
-    job.output_path = request['output_path']
-    log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status, job.output_path)
+    def list_known_models(self) -> list[dict[str, Any]]:
+        return [record.to_dict() for record in self._known_models.values()]
 
-    return {
-        'job': job.to_dict(),
-        'request': request,
-        'checks': checks,
-        'status': 'queued',
-        'message': 'Generation job queued. In production, the queue manager will process this job.',
-    }
+    def get_model(self, model_id: str) -> ModelRecord | None:
+        return self._known_models.get(model_id)
+
+    def import_model(self, source_path: str, model_id: str | None = None) -> dict[str, Any]:
+        path = source_path.strip()
+        if not path:
+            raise ValueError('Source path is required.')
+
+        model = self.get_model(model_id or 'custom') or ModelRecord(
+            id=model_id or 'custom',
+            name=model_id or 'Custom model',
+            kind='image',
+            version='custom',
+            source='User import',
+            license='User responsibility',
+            status='imported',
+            installed=True,
+            path=path,
+            supported_tasks=['image'],
+            notes='Manual import detected. Compatibility must be checked by the user.',
+        )
+        model.installed = True
+        model.path = path
+        model.status = 'imported'
+        self._known_models[model.id] = model
+        return model.to_dict()
+
+    def get_recommendations(self, ram_total_gb: float, gpu_vram_gb: float | None) -> list[dict[str, Any]]:
+        recommendations: list[dict[str, Any]] = []
+        for record in self._known_models.values():
+            if record.id == 'sd15' and ram_total_gb >= 8:
+                recommendations.append({'id': record.id, 'reason': 'Best entry-level local image model.'})
+            elif record.id == 'sdxl' and ram_total_gb >= 16 and (gpu_vram_gb is None or gpu_vram_gb >= 8):
+                recommendations.append({'id': record.id, 'reason': 'Good quality model for stronger GPUs.'})
+            elif record.id == 'wan21' and ram_total_gb >= 16 and (gpu_vram_gb is None or gpu_vram_gb >= 6):
+                recommendations.append({'id': record.id, 'reason': 'Video generation candidate for more capable systems.'})
+        return recommendations
+
+    def check_compatibility(self, model_id: str, ram_total_gb: float, gpu_vram_gb: float | None) -> dict[str, Any]:
+        model = self.get_model(model_id)
+        if model is None:
+            raise ValueError(f'Unknown model id: {model_id}')
+
+        if model.id == 'sd15':
+            min_ram = 8.0
+            min_vram = 2.0
+        elif model.id == 'sdxl':
+            min_ram = 16.0
+            min_vram = 6.0
+        elif model.id == 'wan21':
+            min_ram = 16.0
+            min_vram = 6.0
+        else:
+            min_ram = 8.0
+            min_vram = 2.0
+
+        compatible = ram_total_gb >= min_ram and (gpu_vram_gb is None or gpu_vram_gb >= min_vram)
+        return {
+            'model_id': model_id,
+            'compatible': compatible,
+            'required_ram_gb': min_ram,
+            'required_vram_gb': min_vram,
+            'message': 'Model is compatible with this system.' if compatible else 'Model requires more RAM or VRAM than your current hardware provides.',
+        }
 
 
-@app.get('/history')
-def generation_history():
-    return list_generation_history()
+model_manager = ModelManager()
