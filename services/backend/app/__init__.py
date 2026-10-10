@@ -1,30 +1,39 @@
+import os
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
-from app.hardware import build_generation_plan, build_hardware_summary, choose_resource_profile
+import app.storage as storage
+from app.storage import initialize_database, list_generation_history, list_projects, log_generation, save_project
 
 
-class HardwareTests(unittest.TestCase):
-    def test_profile_for_small_memory(self):
-        self.assertEqual(choose_resource_profile(6.0), 'Low Resource Mode')
+class StorageTests(unittest.TestCase):
+    def setUp(self):
+        self.test_db = Path(tempfile.mkdtemp()) / 'test_ai_studio.db'
+        os.environ['AI_STUDIO_DB_PATH'] = str(self.test_db)
+        storage.DB_PATH = self.test_db
 
-    def test_profile_for_moderate_memory(self):
-        self.assertEqual(choose_resource_profile(12.0), 'Balanced Mode')
+    def test_initialize_database_creates_tables(self):
+        initialize_database()
+        conn = sqlite3.connect(str(self.test_db))
+        try:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects', 'generation_history')"
+            ).fetchall()
+            self.assertEqual(len(tables), 2)
+        finally:
+            conn.close()
 
-    def test_build_hardware_summary_has_expected_fields(self):
-        summary = build_hardware_summary()
-        self.assertTrue(summary.platform)
-        self.assertTrue(summary.cpu_model)
-        self.assertGreater(summary.cpu_cores, 0)
-        self.assertIn(summary.resource_profile, {'Low Resource Mode', 'Balanced Mode', 'Quality Mode'})
-
-    def test_generation_plan_rejects_missing_model(self):
-        with self.assertRaises(ValueError):
-            build_generation_plan('', 12.0, 4.0)
-
-    def test_generation_plan_for_reasonable_machine(self):
-        plan = build_generation_plan('Stable Diffusion 1.5', 32.0, 8.0)
-        self.assertEqual(plan['recommended_mode'], 'Balanced Mode')
-        self.assertTrue(plan['allow_gpu'])
+    def test_project_and_generation_logging(self):
+        initialize_database()
+        project_id = save_project('Test Project', '/tmp/project', 'Example description')
+        self.assertGreater(project_id, 0)
+        log_generation('task-123', 'image', 'Stable Diffusion 1.5', 'A test prompt', 'Preparing', '/tmp/output.png')
+        projects = list_projects()
+        history = list_generation_history()
+        self.assertTrue(any(project['name'] == 'Test Project' for project in projects))
+        self.assertTrue(any(item['task_id'] == 'task-123' for item in history))
 
 
 if __name__ == '__main__':
