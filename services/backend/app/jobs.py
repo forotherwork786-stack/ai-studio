@@ -1,45 +1,23 @@
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
-DB_PATH = Path(__file__).resolve().parents[1] / 'ai_studio.db'
+from pydantic import BaseModel, Field
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+class GenerationRequest(BaseModel):
+    model_name: str = Field(..., min_length=1)
+    prompt: str = Field(..., min_length=1)
+    negative_prompt: str | None = None
+    width: int = Field(default=1024, ge=256, le=4096)
+    height: int = Field(default=1024, ge=256, le=4096)
+    steps: int = Field(default=28, ge=1, le=100)
+    guidance_scale: float = Field(default=7.5, ge=1.0, le=30.0)
+    seed: int | None = None
+    task_type: str = Field(default='image')
 
 
-def initialize_database() -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                path TEXT NOT NULL,
-                description TEXT
-            )
-            '''
-        )
-        conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS generation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                task_type TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                prompt TEXT,
-                created_at TEXT NOT NULL,
-                status TEXT NOT NULL,
-                output_path TEXT
-            )
-            '''
-        )
-        conn.commit()
-    finally:
-        conn.close()
+class JobStatus(BaseModel):
+    task_id: str
+    status: str
+    progress: float | None = None
+    output_path: str | None = None
+    error: str | None = None

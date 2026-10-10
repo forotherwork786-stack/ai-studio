@@ -1,15 +1,5 @@
-from __future__ import annotations
+"""AI Studio backend package."""
 
-from pathlib import Path
+from .hardware import build_generation_plan, build_hardware_summary
 
-
-def ensure_safe_workspace(path: str | Path) -> Path:
-    workspace = Path(path)
-    workspace.mkdir(parents=True, exist_ok=True)
-    return workspace
-
-
-def sanitize_prompt(prompt: str) -> str:
-    if not prompt or not prompt.strip():
-        raise ValueError('Prompt cannot be empty.')
-    return prompt.strip()
+__all__ = ['build_generation_plan', 'build_hardware_summary']

@@ -1,52 +1,41 @@
-from __future__ import annotations
+import os
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
 
-from typing import List
-
-try:
-    from fastapi import FastAPI
-except Exception as exc:  # pragma: no cover - dependency is installed in the project environment
-    raise RuntimeError('FastAPI is required. Install dependencies from services/backend/requirements.txt') from exc
-
-from .hardware import build_generation_plan, build_hardware_summary
-
-app = FastAPI(title='AI Studio Backend', version='0.1.0')
+from app.storage import DB_PATH, initialize_database, list_generation_history, list_projects, log_generation, save_project
 
 
-@app.get('/health')
-def health() -> dict:
-    return {'status': 'ok', 'service': 'ai-studio-backend'}
+class StorageTests(unittest.TestCase):
+    def setUp(self):
+        self.test_db = Path(tempfile.mkdtemp()) / 'test_ai_studio.db'
+        os.environ['AI_STUDIO_DB_PATH'] = str(self.test_db)
+        import app.storage as storage
+        storage.DB_PATH = self.test_db
+
+    def test_initialize_database_creates_tables(self):
+        initialize_database()
+        conn = sqlite3.connect(self.test_db)
+        try:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects', 'generation_history')"
+            ).fetchall()
+            self.assertEqual(len(tables), 2)
+        finally:
+            conn.close()
+
+    def test_project_and_generation_logging(self):
+        initialize_database()
+        project_id = save_project('Test Project', '/tmp/project', 'Example description')
+        self.assertGreater(project_id, 0)
+        log_generation('task-123', 'image', 'Stable Diffusion 1.5', 'A test prompt', 'Preparing', '/tmp/output.png')
+        projects = list_projects()
+        history = list_generation_history()
+        self.assertTrue(any(project['name'] == 'Test Project' for project in projects))
+        self.assertTrue(any(item['task_id'] == 'task-123' for item in history))
 
 
-@app.get('/hardware/summary')
-def hardware_summary() -> dict:
-    return build_hardware_summary().to_dict()
+if __name__ == '__main__':
+    unittest.main()
 
-
-@app.get('/models')
-def list_models() -> List[dict]:
-    return [
-        {
-            'id': 'sd15',
-            'name': 'Stable Diffusion 1.5',
-            'type': 'image',
-            'status': 'ready_for_install',
-            'license': 'CreativeML Open RAIL-M',
-        },
-        {
-            'id': 'wan21',
-            'name': 'Wan 2.1 T2V 1.3B',
-            'type': 'video',
-            'status': 'planned',
-            'license': 'Open-weight license check required',
-        },
-    ]
-
-
-@app.post('/generation/plan')
-def generation_plan(payload: dict) -> dict:
-    model_name = str(payload.get('model_name', '')).strip()
-    ram_total = float(payload.get('ram_total_gb', 8.0))
-    gpu_vram = payload.get('gpu_vram_gb')
-    if gpu_vram is not None:
-        gpu_vram = float(gpu_vram)
-    return build_generation_plan(model_name, ram_total, gpu_vram)
