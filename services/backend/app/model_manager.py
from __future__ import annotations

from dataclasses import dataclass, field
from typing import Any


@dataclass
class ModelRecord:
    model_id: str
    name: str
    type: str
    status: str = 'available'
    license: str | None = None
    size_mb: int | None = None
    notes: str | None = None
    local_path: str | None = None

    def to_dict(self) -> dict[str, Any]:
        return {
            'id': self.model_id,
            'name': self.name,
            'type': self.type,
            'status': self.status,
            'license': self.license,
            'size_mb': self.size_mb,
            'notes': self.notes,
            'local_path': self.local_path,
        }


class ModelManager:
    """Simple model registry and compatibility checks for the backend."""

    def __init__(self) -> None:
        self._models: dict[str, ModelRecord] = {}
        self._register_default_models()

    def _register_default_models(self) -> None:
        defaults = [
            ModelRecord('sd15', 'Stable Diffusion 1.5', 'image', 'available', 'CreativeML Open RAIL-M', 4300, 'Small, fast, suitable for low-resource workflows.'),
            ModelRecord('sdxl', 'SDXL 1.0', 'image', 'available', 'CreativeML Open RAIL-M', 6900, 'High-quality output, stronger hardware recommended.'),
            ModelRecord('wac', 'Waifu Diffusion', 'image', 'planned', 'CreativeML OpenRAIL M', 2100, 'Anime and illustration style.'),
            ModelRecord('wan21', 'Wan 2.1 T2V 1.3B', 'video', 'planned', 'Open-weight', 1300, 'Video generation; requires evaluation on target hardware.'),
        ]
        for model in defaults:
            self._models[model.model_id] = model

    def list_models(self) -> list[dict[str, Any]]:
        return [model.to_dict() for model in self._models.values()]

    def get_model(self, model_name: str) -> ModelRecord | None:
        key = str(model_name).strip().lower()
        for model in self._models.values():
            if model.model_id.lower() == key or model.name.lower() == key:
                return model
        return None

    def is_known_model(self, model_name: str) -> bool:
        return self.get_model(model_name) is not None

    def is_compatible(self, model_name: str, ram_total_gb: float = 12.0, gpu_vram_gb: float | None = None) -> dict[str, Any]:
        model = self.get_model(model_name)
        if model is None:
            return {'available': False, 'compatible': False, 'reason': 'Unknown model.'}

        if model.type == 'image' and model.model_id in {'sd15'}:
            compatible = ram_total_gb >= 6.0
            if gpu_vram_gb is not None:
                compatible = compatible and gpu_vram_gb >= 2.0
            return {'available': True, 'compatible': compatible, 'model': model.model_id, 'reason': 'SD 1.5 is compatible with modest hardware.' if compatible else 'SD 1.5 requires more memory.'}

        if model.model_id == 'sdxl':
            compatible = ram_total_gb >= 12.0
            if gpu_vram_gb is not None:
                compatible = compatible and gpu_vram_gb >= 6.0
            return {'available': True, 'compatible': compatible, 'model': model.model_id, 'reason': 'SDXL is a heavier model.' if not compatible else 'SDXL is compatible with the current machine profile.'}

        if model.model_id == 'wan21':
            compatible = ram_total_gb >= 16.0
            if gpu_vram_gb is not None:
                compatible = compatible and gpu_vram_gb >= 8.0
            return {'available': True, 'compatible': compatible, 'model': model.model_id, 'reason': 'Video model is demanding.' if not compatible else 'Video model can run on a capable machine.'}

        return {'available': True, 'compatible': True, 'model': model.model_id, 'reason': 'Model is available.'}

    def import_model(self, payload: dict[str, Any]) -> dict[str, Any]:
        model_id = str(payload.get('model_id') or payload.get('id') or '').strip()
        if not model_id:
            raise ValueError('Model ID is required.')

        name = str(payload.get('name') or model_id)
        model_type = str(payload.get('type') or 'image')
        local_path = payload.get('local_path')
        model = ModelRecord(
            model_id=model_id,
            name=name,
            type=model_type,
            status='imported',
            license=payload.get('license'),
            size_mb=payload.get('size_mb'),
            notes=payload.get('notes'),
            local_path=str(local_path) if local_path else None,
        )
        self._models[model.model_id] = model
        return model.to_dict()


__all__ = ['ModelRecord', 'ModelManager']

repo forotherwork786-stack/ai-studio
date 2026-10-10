@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class HardwareSummary:
+    ram_total_gb: float = 12.0
+    swap_total_gb: float | None = None
+    gpu_vram_gb: float | None = None
+    cpu_cores: int = 1
+    has_nvidia_gpu: bool = False
+    has_amd_gpu: bool = False
+    has_apple_silicon: bool = False
+    recommendations: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'ram_total_gb': self.ram_total_gb,
+            'swap_total_gb': self.swap_total_gb,
+            'gpu_vram_gb': self.gpu_vram_gb,
+            'cpu_cores': self.cpu_cores,
+            'has_nvidia_gpu': self.has_nvidia_gpu,
+            'has_amd_gpu': self.has_amd_gpu,
+            'has_apple_silicon': self.has_apple_silicon,
+            'recommendations': self.recommendations,
+        }
+
+
+def choose_resource_profile(ram_total_gb: float, gpu_vram_gb: float | None = None) -> str:
+    """Choose the best resource profile for the current machine."""
+    if ram_total_gb < 8.0:
+        return 'Low Resource Mode'
+    if ram_total_gb < 16.0:
+        return 'Balanced Mode'
+    return 'Quality Mode'
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        if value is None or value == '':
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_hardware_summary() -> HardwareSummary:
+    """Collect a summary of machine resources and recommended settings."""
+    ram_total_gb = _coerce_float(os.getenv('RAM_TOTAL_GB'), 12.0)
+    gpu_vram_gb = _coerce_float(os.getenv('GPU_VRAM_GB'), 8.0)
+    cpu_cores = int(os.getenv('CPU_CORES', '8') or 8)
+    has_nvidia_gpu = str(os.getenv('HAS_NVIDIA_GPU', 'false')).lower() in {'1', 'true', 'yes'}
+    has_amd_gpu = str(os.getenv('HAS_AMD_GPU', 'false')).lower() in {'1', 'true', 'yes'}
+    has_apple_silicon = str(os.getenv('HAS_APPLE_SILICON', 'false')).lower() in {'1', 'true', 'yes'}
+
+    recommendations: list[str] = []
+    if ram_total_gb < 8.0:
+        recommendations.append('Keep image dimensions small and reduce steps.')
+    if gpu_vram_gb is not None and gpu_vram_gb < 6.0:
+        recommendations.append('Use SD 1.5 or lower-resolution renders for smoother performance.')
+    if not (has_nvidia_gpu or has_amd_gpu or has_apple_silicon):
+        recommendations.append('CPU fallback mode may be slower; consider a supported GPU.')
+
+    return HardwareSummary(
+        ram_total_gb=ram_total_gb,
+        swap_total_gb=_coerce_float(os.getenv('SWAP_TOTAL_GB'), None),
+        gpu_vram_gb=gpu_vram_gb,
+        cpu_cores=cpu_cores,
+        has_nvidia_gpu=has_nvidia_gpu,
+        has_amd_gpu=has_amd_gpu,
+        has_apple_silicon=has_apple_silicon,
+        recommendations=recommendations,
+    )
+
+
+def build_generation_plan(
+    model_name: str,
+    width: int = 768,
+    height: int = 768,
+    steps: int = 28,
+    ram_total_gb: float | None = None,
+    gpu_vram_gb: float | None = None,
+    resource_profile: str | None = None,
+) -> dict[str, Any]:
+    """Return a hardware-aware generation plan and validation summary."""
+    if model_name is None or not str(model_name).strip():
+        raise ValueError('Model name is required.')
+
+    if width <= 0 or height <= 0:
+        raise ValueError('Image dimensions must be positive integers.')
+
+    summary = build_hardware_summary()
+    effective_ram = ram_total_gb if ram_total_gb is not None else summary.ram_total_gb
+    effective_gpu_vram = gpu_vram_gb if gpu_vram_gb is not None else summary.gpu_vram_gb
+    profile = resource_profile or choose_resource_profile(effective_ram, effective_gpu_vram)
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    recommendations: list[str] = list(summary.recommendations)
+
+    normalized_model = str(model_name).strip().lower()
+    if normalized_model in {'sd15', 'stable-diffusion-1.5', 'stable_diffusion_1_5'}:
+        if effective_ram < 6.0:
+            errors.append('Stable Diffusion 1.5 requires at least 6 GB RAM for a practical workflow.')
+        if effective_gpu_vram is not None and effective_gpu_vram < 2.0:
+            warnings.append('GPU VRAM is low; generation may be slow or fail on larger dimensions.')
+    elif normalized_model in {'sdxl', 'stable-diffusion-xl', 'stable_diffusion_xl'}:
+        if effective_ram < 12.0:
+            errors.append('SDXL typically needs at least 12 GB RAM for reliable output.')
+        if effective_gpu_vram is not None and effective_gpu_vram < 6.0:
+            errors.append('SDXL usually requires at least 6 GB GPU VRAM.')
+    elif normalized_model in {'wan21', 'wan-2.1', 'wan_2_1'}:
+        if effective_ram < 16.0:
+            warnings.append('Video generation may be slow on low-memory systems.')
+        if effective_gpu_vram is not None and effective_gpu_vram < 8.0:
+            warnings.append('Video generation benefits from more VRAM than most entry-level GPUs provide.')
+
+    if width * height > 1500000:
+        warnings.append('Large image dimensions increase memory usage and generation time.')
+    if steps > 60:
+        warnings.append('High step counts can significantly increase runtime.')
+
+    can_proceed = not errors
+    if not can_proceed and not recommendations:
+        recommendations.append('Reduce image resolution, use a lighter model, or switch to a lower-resource profile.')
+
+    return {
+        'model_name': model_name,
+        'requested_dimensions': {'width': width, 'height': height},
+        'profile': profile,
+        'ram_total_gb': effective_ram,
+        'gpu_vram_gb': effective_gpu_vram,
+        'steps': steps,
+        'can_proceed': can_proceed,
+        'warnings': warnings,
+        'errors': errors,
+        'recommendations': recommendations,
+    }
+
+
+__all__ = ['HardwareSummary', 'choose_resource_profile', 'build_hardware_summary', 'build_generation_plan']

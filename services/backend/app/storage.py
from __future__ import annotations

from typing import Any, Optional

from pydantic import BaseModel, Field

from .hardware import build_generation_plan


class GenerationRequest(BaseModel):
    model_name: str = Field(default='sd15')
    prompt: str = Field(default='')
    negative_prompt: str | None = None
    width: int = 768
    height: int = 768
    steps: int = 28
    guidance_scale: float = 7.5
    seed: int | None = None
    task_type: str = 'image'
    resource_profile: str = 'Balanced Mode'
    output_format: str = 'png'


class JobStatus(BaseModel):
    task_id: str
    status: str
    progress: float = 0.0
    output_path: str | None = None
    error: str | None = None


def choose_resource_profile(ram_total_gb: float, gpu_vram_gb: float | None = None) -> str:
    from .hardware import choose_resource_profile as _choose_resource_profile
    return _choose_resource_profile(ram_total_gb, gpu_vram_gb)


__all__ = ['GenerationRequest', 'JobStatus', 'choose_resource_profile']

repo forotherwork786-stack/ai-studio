@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from typing import Any
+
+from .comfyui import ComfyUIAdapter
+from .hardware import build_generation_plan, build_hardware_summary, choose_resource_profile
+from .model_manager import ModelManager
+
+
+class GenerationCoordinator:
+    """Coordinates generation requests across hardware checks, model availability, and engine selection."""
+
+    def __init__(self) -> None:
+        self.model_manager = ModelManager()
+        self.comfyui = ComfyUIAdapter()
+
+    def can_generate_image(self, model_name: str, width: int = 768, height: int = 768, steps: int = 28) -> dict[str, Any]:
+        """Validate a generation request against current hardware and model capabilities."""
+        plan = build_generation_plan(
+            model_name=model_name,
+            width=width,
+            height=height,
+            steps=steps,
+            resource_profile=choose_resource_profile(build_hardware_summary().ram_total_gb),
+        )
+        model_check = self.model_manager.is_compatible(model_name, build_hardware_summary().ram_total_gb, build_hardware_summary().gpu_vram_gb)
+        if not model_check['available']:
+            plan['errors'].append(model_check['reason'])
+            plan['can_proceed'] = False
+        elif not model_check['compatible']:
+            plan['warnings'].append(model_check['reason'])
+            plan['can_proceed'] = False
+        return plan
+
+    def get_optimized_settings(self, resource_profile: str) -> dict[str, Any]:
+        hardware = build_hardware_summary()
+        profile = (resource_profile or choose_resource_profile(hardware.ram_total_gb)).strip()
+        if profile == 'Low Resource Mode':
+            return {'width': 512, 'height': 512, 'steps': 20, 'guidance_scale': 6.5, 'resource_profile': profile}
+        if profile == 'Quality Mode':
+            return {'width': 1024, 'height': 1024, 'steps': 40, 'guidance_scale': 8.0, 'resource_profile': profile}
+        return {'width': 768, 'height': 768, 'steps': 28, 'guidance_scale': 7.5, 'resource_profile': profile}
+
+
+__all__ = ['GenerationCoordinator']

@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
+
+@dataclass
+class GenerationJob:
+    task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    model_name: str = 'sd15'
+    prompt: str = ''
+    negative_prompt: str | None = None
+    width: int = 768
+    height: int = 768
+    steps: int = 28
+    guidance_scale: float = 7.5
+    seed: int | None = None
+    task_type: str = 'image'
+    status: str = 'queued'
+    progress: float = 0.0
+    output_path: str | None = None
+    error: str | None = None
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    started_at: str | None = None
+    completed_at: str | None = None
+    resource_profile: str = 'Balanced Mode'
+    output_format: str = 'png'
+
+    @property
+    def id(self) -> str:
+        return self.task_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'task_id': self.task_id,
+            'id': self.task_id,
+            'model_name': self.model_name,
+            'prompt': self.prompt,
+            'negative_prompt': self.negative_prompt,
+            'width': self.width,
+            'height': self.height,
+            'steps': self.steps,
+            'guidance_scale': self.guidance_scale,
+            'seed': self.seed,
+            'task_type': self.task_type,
+            'status': self.status,
+            'progress': self.progress,
+            'output_path': self.output_path,
+            'error': self.error,
+            'created_at': self.created_at,
+            'started_at': self.started_at,
+            'completed_at': self.completed_at,
+            'resource_profile': self.resource_profile,
+            'output_format': self.output_format,
+        }
+
+    @classmethod
+    def from_request(cls, request_data: dict[str, Any]) -> 'GenerationJob':
+        return cls(
+            model_name=request_data.get('model_name', 'sd15'),
+            prompt=request_data.get('prompt', ''),
+            negative_prompt=request_data.get('negative_prompt'),
+            width=request_data.get('width', 768),
+            height=request_data.get('height', 768),
+            steps=request_data.get('steps', 28),
+            guidance_scale=request_data.get('guidance_scale', 7.5),
+            seed=request_data.get('seed'),
+            task_type=request_data.get('task_type', 'image'),
+            resource_profile=request_data.get('resource_profile', 'Balanced Mode'),
+            output_format=request_data.get('output_format', 'png'),
+        )
+
+    def mark_started(self) -> None:
+        self.status = 'running'
+        self.started_at = datetime.utcnow().isoformat()
+
+    def mark_completed(self, output_path: str | None = None) -> None:
+        self.status = 'completed'
+        self.progress = 1.0
+        self.output_path = output_path
+        self.completed_at = datetime.utcnow().isoformat()
+
+    def mark_failed(self, error: str) -> None:
+        self.status = 'failed'
+        self.error = error
+        self.completed_at = datetime.utcnow().isoformat()
+
+    def update_progress(self, progress: float) -> None:
+        self.progress = max(0.0, min(float(progress), 1.0))
+
+
+__all__ = ['GenerationJob']
