@@ -1,0 +1,88 @@
+# ai-studio
+
+AI Studio is a lightweight, professional desktop app for local AI image and video generation. It is designed to work on a wide range of devices, with sensible defaults for low-resource computers and optional advanced settings for stronger hardware.
+
+## Goals
+
+- Free and local-first generation workflow
+- Professional dark UI for image and video studios
+- ComfyUI-friendly architecture for real local models
+- Fast project management and generation queue
+- Honest hardware checks and resource safety warnings
+- Windows-first setup with clear Linux/macOS roadmap
+
+## Included in this milestone
+
+- Modern desktop shell structure for Tauri + React
+- Professional dark interface for dashboard, image studio, and video studio
+- Local project and generation database design
+- Hardware detection utilities for CPU, RAM, GPU, and storage
+- Python backend skeleton and API endpoints
+- Windows installation instructions
+- Automated tests for core compatibility logic
+
+## Project structure
+
+```text
+ai-studio/
+├── apps/
+│   └── desktop/
+│       ├── src/
+│       ├── src-tauri/
+│       ├── index.html
+│       ├── package.json
+│       └── vite.config.ts
+├── services/
+│   └── backend/
+│       ├── app/
+│       ├── tests/
+│       └── requirements.txt
+├── docs/
+│   ├── WINDOWS_INSTALL.md
+│   └── ROADMAP.md
+├── .env.example
+├── .gitignore
+├── README.md
+└── LICENSE
+```
+
+## Quick start
+
+### Frontend
+
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
+
+### Backend
+
+```bash
+cd services/backend
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Current status
+
+This milestone is intentionally lightweight and production-safe:
+
+- The UI is functional and polished
+- The backend provides resource and project APIs
+- Real model installation and actual AI generation will be added incrementally
+- The app clearly separates planned engine integrations from implemented features
+
+## Windows installation note
+
+See `docs/WINDOWS_INSTALL.md` for OS-specific setup steps.
+
+## Roadmap
+
+See `docs/ROADMAP.md` for the planned phases from foundation to production testing.
+
+## License
+
+MIT

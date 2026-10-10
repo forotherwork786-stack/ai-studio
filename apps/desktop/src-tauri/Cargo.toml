@@ -1,0 +1,187 @@
+const navItems = [
+  'Dashboard',
+  'Image Studio',
+  'Video Studio',
+  'Projects',
+  'Media Library',
+  'Generation Queue',
+  'Model Manager',
+  'Resource Monitor',
+  'Settings',
+  'Diagnostics',
+];
+
+const stats = [
+  { label: 'GPU', value: 'RTX 4060', hint: 'CUDA ready' },
+  { label: 'RAM', value: '32 GB', hint: 'Balanced mode' },
+  { label: 'Storage', value: '350 GB', hint: 'Free space' },
+  { label: 'Models', value: '3', hint: 'Installed locally' },
+];
+
+const queue = [
+  { name: 'Portrait retouch', status: 'Generating', time: '00:12' },
+  { name: 'City motion clip', status: 'Queued', time: 'Pending' },
+  { name: 'Product background', status: 'Completed', time: '02:40' },
+];
+
+const gallery = ['Hero Shot', 'Concept A', 'Draft 2', 'Background', 'Variation 3', 'Upscaled'];
+
+export default function App() {
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">A</div>
+          <span>AI Studio</span>
+        </div>
+
+        <nav className="nav-group">
+          {navItems.map((item, index) => (
+            <button
+              key={item}
+              className={`nav-item ${index === 1 ? 'active' : ''}`}
+              type="button"
+            >
+              <span>{index + 1}</span>
+              {item}
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <main className="content">
+        <header className="topbar">
+          <h1>Image Studio</h1>
+          <div className="top-actions">
+            <span className="badge">Local mode</span>
+            <button className="secondary-btn" type="button">Diagnostics</button>
+            <button className="primary-btn" type="button">Generate</button>
+          </div>
+        </header>
+
+        <section className="main-panel">
+          <div className="column">
+            <div className="card">
+              <h2>Creative workspace</h2>
+              <div className="workspace">
+                <div className="prompt-box">
+                  <label htmlFor="prompt">Prompt</label>
+                  <textarea id="prompt" defaultValue="A cinematic portrait of a designer in a modern studio, soft natural light, ultra detailed, volumetric highlights" />
+
+                  <label htmlFor="negative">Negative prompt</label>
+                  <input id="negative" defaultValue="blurry, low quality, distorted hands" />
+
+                  <div className="control-row">
+                    <div>
+                      <label htmlFor="model">Model</label>
+                      <select id="model" defaultValue="sd15">
+                        <option value="sd15">Stable Diffusion 1.5</option>
+                        <option value="sdxl">SDXL</option>
+                        <option value="flux">FLUX Dev</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="preset">Preset</label>
+                      <select id="preset" defaultValue="balanced">
+                        <option value="balanced">Balanced</option>
+                        <option value="low">Low Resource</option>
+                        <option value="quality">Quality</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-panel">
+                  <label htmlFor="aspect">Aspect ratio</label>
+                  <select id="aspect" defaultValue="16:9">
+                    <option value="1:1">1:1</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                    <option value="4:5">4:5</option>
+                  </select>
+
+                  <label htmlFor="size">Resolution</label>
+                  <input id="size" defaultValue="1024 x 1024" />
+
+                  <label htmlFor="steps">Steps</label>
+                  <input id="steps" defaultValue="28" />
+
+                  <label htmlFor="guidance">Guidance scale</label>
+                  <input id="guidance" defaultValue="7.5" />
+
+                  <label htmlFor="seed">Seed</label>
+                  <input id="seed" defaultValue="904312" />
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <h3>Results gallery</h3>
+              <div className="gallery-grid">
+                {gallery.map((item) => (
+                  <div key={item} className="preview-tile">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="column">
+            <div className="card">
+              <h3>System overview</h3>
+              <div className="stats-grid">
+                {stats.map((stat) => (
+                  <div key={stat.label} className="stat-box">
+                    <small>{stat.label}</small>
+                    <strong>{stat.value}</strong>
+                    <div style={{ color: 'var(--muted)', marginTop: '6px' }}>{stat.hint}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3>Live resource status</h3>
+              <div className="metric-list">
+                <div className="metric-row">
+                  <span>CPU usage</span>
+                  <strong>42%</strong>
+                </div>
+                <div className="metric-row">
+                  <span>VRAM</span>
+                  <strong>5.6 / 8 GB</strong>
+                </div>
+                <div className="metric-row">
+                  <span>System RAM</span>
+                  <strong>17 / 32 GB</strong>
+                </div>
+                <div className="metric-row">
+                  <span>Disk IO</span>
+                  <strong>Healthy</strong>
+                </div>
+              </div>
+              <div className="progress"><div style={{ width: '68%' }} /></div>
+            </div>
+
+            <div className="card">
+              <h3>Generation queue</h3>
+              <div className="queue-list">
+                {queue.map((item) => (
+                  <div key={item.name} className="queue-item">
+                    <div>
+                      <strong>{item.name}</strong>
+                      <small style={{ color: 'var(--muted)' }}>{item.time}</small>
+                    </div>
+                    <span className="queue-status">{item.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}

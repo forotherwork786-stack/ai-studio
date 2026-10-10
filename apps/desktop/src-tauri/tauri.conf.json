@@ -1,0 +1,20 @@
+[package]
+name = "ai-studio"
+version = "0.1.0"
+description = "AI Studio desktop shell"
+authors = ["Your Team"]
+license = "MIT"
+repository = "https://github.com/forotherwork786-stack/ai-studio"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
