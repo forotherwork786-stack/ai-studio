@@ -1,98 +1,203 @@
-from __future__ import annotations
-
 import os
-import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(os.getenv('AI_STUDIO_DB_PATH', Path(__file__).resolve().parents[1] / 'ai_studio.db'))
+try:
+    from fastapi import FastAPI
+except ImportError as exc:
+    raise RuntimeError('FastAPI required. Run: pip install -r requirements.txt') from exc
+
+from .coordinator import GenerationCoordinator
+from .comfyui_integration import ComfyUIIntegration
+from .generator import LocalImageGenerator
+from .hardware import build_generation_plan, build_hardware_summary
+from .jobs import GenerationJob
+from .storage import initialize_database, list_generation_history, list_projects, log_generation, save_project
+
+app = FastAPI(
+    title='AI Studio Backend',
+    version='0.1.0',
+    description='Local AI image and video generation with free, open models.',
+)
+
+comfyui = ComfyUIIntegration()
+generator = LocalImageGenerator()
+coordinator = GenerationCoordinator()
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
+@app.on_event('startup')
+def startup_event():
+    initialize_database()
 
 
-def initialize_database() -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = get_connection()
+@app.get('/health')
+def health():
+    return {
+        'status': 'ok',
+        'service': 'ai-studio-backend',
+        'version': '0.1.0',
+    }
+
+
+@app.get('/hardware/summary')
+def hardware_summary():
+    return build_hardware_summary().to_dict()
+
+
+@app.get('/models')
+def list_models():
+    return [
+        {
+            'id': 'sd15',
+            'name': 'Stable Diffusion 1.5',
+            'type': 'image',
+            'size_gb': 4.0,
+            'status': 'ready_for_install',
+            'license': 'CreativeML Open RAIL-M',
+            'requirements': comfyui.get_model_requirements('sd-v1-5.ckpt'),
+        },
+        {
+            'id': 'sdxl',
+            'name': 'Stable Diffusion XL',
+            'type': 'image',
+            'size_gb': 7.0,
+            'status': 'ready_for_install',
+            'license': 'CreativeML Open RAIL-M',
+            'requirements': comfyui.get_model_requirements('sd-xl.safetensors'),
+        },
+        {
+            'id': 'wan21',
+            'name': 'Wan 2.1 T2V 1.3B',
+            'type': 'video',
+            'size_gb': 2.5,
+            'status': 'planned',
+            'license': 'Open-weight',
+            'notes': 'Video generation support planned for Phase 4.',
+        },
+    ]
+
+
+@app.get('/comfyui/status')
+def comfyui_status():
+    return comfyui.get_status()
+
+
+@app.get('/generation/can-proceed')
+def generation_can_proceed(model_name: str = 'sd-v1-5.ckpt', width: int = 512, height: int = 512):
+    return coordinator.can_generate_image(model_name, width, height)
+
+
+@app.get('/generation/defaults')
+def generation_defaults(profile: str = 'Balanced Mode'):
+    return coordinator.get_optimized_settings(profile)
+
+
+@app.post('/projects')
+def create_project(payload: dict):
+    from fastapi import HTTPException
+    name = str(payload.get('name', '')).strip()
+    path = str(payload.get('path', '')).strip()
+    description = payload.get('description')
     try:
-        conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                path TEXT NOT NULL,
-                description TEXT
-            )
-            '''
-        )
-        conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS generation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                task_type TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                prompt TEXT,
-                created_at TEXT NOT NULL,
-                status TEXT NOT NULL,
-                output_path TEXT
-            )
-            '''
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        project_id = save_project(name, path, description)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'id': project_id, 'name': name, 'path': path, 'description': description}
 
 
-def save_project(name: str, path: str, description: str | None = None) -> int:
-    if not name or not name.strip():
-        raise ValueError('Project name is required.')
-    if not path or not path.strip():
-        raise ValueError('Project path is required.')
-
-    conn = get_connection()
-    try:
-        cursor = conn.execute(
-            'INSERT INTO projects (name, created_at, path, description) VALUES (?, datetime("now"), ?, ?)',
-            (name.strip(), path.strip(), description.strip() if description else None),
-        )
-        conn.commit()
-        return int(cursor.lastrowid)
-    finally:
-        conn.close()
+@app.get('/projects')
+def read_projects():
+    return list_projects()
 
 
-def list_projects() -> list[dict]:
-    conn = get_connection()
-    try:
-        rows = conn.execute('SELECT * FROM projects ORDER BY created_at DESC').fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+@app.get('/jobs')
+def read_jobs():
+    return list_generation_history()
 
 
-def log_generation(task_id: str, task_type: str, model_name: str, prompt: str, status: str, output_path: str | None = None) -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            '''
-            INSERT INTO generation_history (task_id, task_type, model_name, prompt, created_at, status, output_path)
-            VALUES (?, ?, ?, ?, datetime("now"), ?, ?)
-            ''',
-            (task_id, task_type, model_name, prompt, status, output_path),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+@app.post('/generate/validate')
+def validate_generation_request(payload: dict):
+    """Validate a generation request before execution."""
+    request = generator.build_generation_request(
+        task_id=payload.get('task_id', 'test'),
+        model_name=payload.get('model_name', 'Stable Diffusion 1.5'),
+        prompt=payload.get('prompt', ''),
+        negative_prompt=payload.get('negative_prompt'),
+        width=payload.get('width', 512),
+        height=payload.get('height', 512),
+        steps=payload.get('steps', 20),
+        guidance_scale=payload.get('guidance_scale', 7.5),
+        seed=payload.get('seed'),
+        resource_profile=payload.get('resource_profile', 'Balanced Mode'),
+    )
+    return request
 
 
-def list_generation_history() -> list[dict]:
-    conn = get_connection()
-    try:
-        rows = conn.execute('SELECT * FROM generation_history ORDER BY created_at DESC').fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+@app.post('/generate')
+def create_generation_job(payload: dict):
+    """Create and queue a generation job."""
+    from fastapi import HTTPException
+    import asyncio
+
+    model_name = str(payload.get('model_name', 'Stable Diffusion 1.5')).strip()
+    prompt = str(payload.get('prompt', '')).strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail='Prompt cannot be empty.')
+
+    checks = coordinator.can_generate_image(
+        model_name,
+        payload.get('width', 512),
+        payload.get('height', 512),
+    )
+
+    job = GenerationJob.from_request(payload)
+    job.status = 'Preparing'
+    job.progress = 0.05
+
+    if not checks['can_proceed']:
+        job.status = 'Failed'
+        job.error = ' '.join(checks['errors']) or 'Generation not available on this system.'
+        log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status)
+        return {
+            'job': job.to_dict(),
+            'checks': checks,
+            'status': 'failed',
+        }
+
+    request = generator.build_generation_request(
+        task_id=job.task_id,
+        model_name=model_name,
+        prompt=prompt,
+        negative_prompt=payload.get('negative_prompt'),
+        width=payload.get('width', 512),
+        height=payload.get('height', 512),
+        steps=payload.get('steps', 20),
+        guidance_scale=payload.get('guidance_scale', 7.5),
+        seed=payload.get('seed'),
+        resource_profile=payload.get('resource_profile', 'Balanced Mode'),
+    )
+
+    if not request['valid']:
+        job.status = 'Failed'
+        job.error = request['error']
+        log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status)
+        return {
+            'job': job.to_dict(),
+            'request': request,
+            'status': 'failed',
+        }
+
+    job.status = 'Waiting'
+    job.output_path = request['output_path']
+    log_generation(job.task_id, job.task_type, job.model_name, job.prompt, job.status, job.output_path)
+
+    return {
+        'job': job.to_dict(),
+        'request': request,
+        'checks': checks,
+        'status': 'queued',
+        'message': 'Generation job queued. In production, the queue manager will process this job.',
+    }
+
+
+@app.get('/history')
+def generation_history():
+    return list_generation_history()
